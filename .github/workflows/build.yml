@@ -30,13 +30,22 @@ jobs:
       - name: Install Visual Studio C++ ATL/MFC
         shell: pwsh
         run: |
-          $vswhere = "$env:ProgramFiles(x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installerDir = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer"
+          $vswhere = Join-Path $installerDir "vswhere.exe"
+          $installer = Join-Path $installerDir "setup.exe"
+
+          if (!(Test-Path -LiteralPath $vswhere)) {
+            throw "vswhere.exe not found: $vswhere"
+          }
+          if (!(Test-Path -LiteralPath $installer)) {
+            throw "Visual Studio installer not found: $installer"
+          }
+
           $installationPath = & $vswhere -latest -products * -property installationPath
           if (!$installationPath) {
             throw "Visual Studio installation not found"
           }
 
-          $installer = "$env:ProgramFiles(x86)\Microsoft Visual Studio\Installer\setup.exe"
           & $installer modify --installPath "$installationPath" --add Microsoft.VisualStudio.Component.VC.ATL --add Microsoft.VisualStudio.Component.VC.ATLMFC --quiet --norestart --wait
 
           if ($LASTEXITCODE -ne 0) {
