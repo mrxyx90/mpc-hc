@@ -27,12 +27,28 @@ jobs:
       - name: Setup NuGet
         uses: NuGet/setup-nuget@v2
 
+      - name: Install Visual Studio C++ ATL/MFC
+        shell: pwsh
+        run: |
+          $vswhere = "$env:ProgramFiles(x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installationPath = & $vswhere -latest -products * -property installationPath
+          if (!$installationPath) {
+            throw "Visual Studio installation not found"
+          }
+
+          $installer = "$env:ProgramFiles(x86)\Microsoft Visual Studio\Installer\setup.exe"
+          & $installer modify --installPath "$installationPath" --add Microsoft.VisualStudio.Component.VC.ATL --add Microsoft.VisualStudio.Component.VC.ATLMFC --quiet --norestart --wait
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Visual Studio ATL/MFC installation failed with exit code $LASTEXITCODE"
+          }
+
       - name: Install MSYS2 and build dependencies
         shell: pwsh
         run: |
           choco install msys2 --no-progress -y
           & "C:\msys64\usr\bin\bash.exe" -lc "pacman -Syu --noconfirm"
-          & "C:\msys64\usr\bin\bash.exe" -lc "pacman -S --noconfirm --needed mingw-w64-x86_64-gcc mingw-w64-i686-gcc make perl"
+          & "C:\msys64\usr\bin\bash.exe" -lc "pacman -S --noconfirm --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-binutils mingw-w64-x86_64-pkgconf mingw-w64-x86_64-gnutls mingw-w64-i686-gcc make perl"
 
       - name: Build MPC-HC x64 Release
         shell: cmd
