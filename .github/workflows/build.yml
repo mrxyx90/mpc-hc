@@ -180,7 +180,7 @@ jobs:
           Set-Content -Path "build.user.bat" -Value ($buildUserBat -join "`r`n") -Encoding ASCII
           Get-Content "build.user.bat"
 
-      - name: Prepare DirectX redistributable DLLs
+      - name: Prepare DirectX redistributable DLLs and MPC Video Renderer
         shell: pwsh
         run: |
           $platform = "${{ inputs.platform || 'x64' }}"
@@ -196,6 +196,29 @@ jobs:
             Copy-Item -Path (Join-Path $d.Src "D3DCompiler_47.dll") -Destination (Join-Path $d.Dst "d3dcompiler_47.dll") -Force
             Copy-Item -Path (Join-Path $d.Src "D3DX9_43.dll") -Destination (Join-Path $d.Dst "d3dx9_43.dll") -Force
           }
+
+          # Download latest MPC Video Renderer (MPCVR) into distrib\MPCVR
+          $mpcvrDir = Join-Path $env:GITHUB_WORKSPACE "distrib\MPCVR"
+          New-Item -ItemType Directory -Force -Path $mpcvrDir | Out-Null
+          try {
+            $headers = @{ "User-Agent" = "MPC-HC-CI" }
+            if ($env:GITHUB_TOKEN) {
+              $headers["Authorization"] = "Bearer $env:GITHUB_TOKEN"
+            }
+            $release = Invoke-RestMethod -Uri "https://api.github.com/repos/Aleksoid1978/VideoRenderer/releases/latest" -Headers $headers
+            $asset = $release.assets | Where-Object { $_.name -match "^MpcVideoRenderer-.*\.zip$" -and $_.name -notmatch "Debug" } | Select-Object -First 1
+            if ($asset) {
+              Write-Host "Downloading $($asset.name)..."
+              $zipPath = Join-Path $env:RUNNER_TEMP $asset.name
+              Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zipPath
+              Expand-Archive -Path $zipPath -DestinationPath $mpcvrDir -Force
+              Get-ChildItem -Path $mpcvrDir
+            }
+          } catch {
+            Write-Warning "Failed to download MPC Video Renderer: $_"
+          }
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build MPC-HC
         shell: cmd
@@ -250,14 +273,26 @@ jobs:
               }
             }
 
-            # Copy Shaders, Shaders11, and COPYING.txt into the portable folder (same as SubCreatePackages in build.bat)
+            # Copy MPCVR, Shaders, Shaders11, Toolbars, COPYING.txt, and Authors.txt into the portable folder
+            $isX64 = $dir.Name -match "x64"
+            $mpcvrAx = if ($isX64) { "distrib\MPCVR\MpcVideoRenderer64.ax" } else { "distrib\MPCVR\MpcVideoRenderer.ax" }
+            if (Test-Path $mpcvrAx) {
+              $mpcvrDest = Join-Path $dest "MPCVR"
+              New-Item -ItemType Directory -Force -Path $mpcvrDest | Out-Null
+              Copy-Item -Path $mpcvrAx -Destination $mpcvrDest -Force
+            }
+
             $shaders9 = Join-Path $dest "Shaders"
             $shaders11 = Join-Path $dest "Shaders11"
+            $toolbars = Join-Path $dest "Toolbars"
             New-Item -ItemType Directory -Force -Path $shaders9 | Out-Null
             New-Item -ItemType Directory -Force -Path $shaders11 | Out-Null
+            New-Item -ItemType Directory -Force -Path $toolbars | Out-Null
             Copy-Item -Path "src\mpc-hc\res\shaders\dx9\*.hlsl" -Destination $shaders9 -Force
             Copy-Item -Path "src\mpc-hc\res\shaders\dx11\*.hlsl" -Destination $shaders11 -Force
+            Copy-Item -Path "distrib\Toolbars\*" -Destination $toolbars -Recurse -Force
             Copy-Item -Path "COPYING.txt" -Destination $dest -Force
+            Copy-Item -Path "docs\Authors.txt" -Destination $dest -Force
           }
 
           # Stage installer .exe separately if built
