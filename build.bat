@@ -363,9 +363,12 @@ IF NOT DEFINED InnoSetupPath (
 )
 
 TITLE Compiling %1 %COMPILER% installer...
-"%InnoSetupPath%" /SMySignTool="cmd /c "%FILE_DIR%contrib\sign.bat" $f" /Q /O"%BIN_DIR%"^
- "distrib\mpc-hc_setup.iss" %MPCHC_INNO_DEF%
-IF %ERRORLEVEL% NEQ 0 CALL "%COMMON%" :SubMsg "ERROR" "Compilation failed!" & EXIT /B
+IF EXIST "%FILE_DIR%signinfo.txt" (
+  "%InnoSetupPath%" /SMySignTool="cmd /c ""%FILE_DIR%contrib\sign.bat"" $f" /Q /O"%FILE_DIR%%BIN_DIR%" "distrib\mpc-hc_setup.iss" %MPCHC_INNO_DEF%
+) ELSE (
+  "%InnoSetupPath%" /O"%FILE_DIR%%BIN_DIR%" "distrib\mpc-hc_setup.iss" %MPCHC_INNO_DEF%
+)
+IF %ERRORLEVEL% NEQ 0 CALL "%COMMON%" :SubMsg "ERROR" "Compilation failed!" & EXIT /B 1
 CALL "%COMMON%" :SubMsg "INFO" "%1 installer successfully built"
 
 EXIT /B

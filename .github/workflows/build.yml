@@ -136,7 +136,8 @@ jobs:
           # Ensure Inno Setup >= 6.3.2 is installed (required by distrib\mpc-hc_setup.iss)
           $isccPaths = @(
             "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-            "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+            "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
+            "${env:LOCALAPPDATA}\Programs\Inno Setup 6\ISCC.exe"
           )
           $iscc = $isccPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
           $needInnoUpgrade = $true
@@ -150,6 +151,16 @@ jobs:
           if ($needInnoUpgrade) {
             Write-Host "Installing/upgrading Inno Setup (6.3.2+ required)..."
             choco upgrade innosetup --no-progress -y
+            $iscc = $isccPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+            if (!$iscc) {
+              $isccCmd = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+              if ($isccCmd) { $iscc = $isccCmd.Source }
+            }
+          }
+          if ($iscc) {
+            Write-Host "Using Inno Setup compiler: $iscc"
+          } else {
+            Write-Warning "ISCC.exe not found in standard locations"
           }
 
           # Detect latest installed Windows 10/11 SDK version
@@ -177,6 +188,9 @@ jobs:
             "SET `"MPCHC_PYTHON=$pythonDir`"",
             "SET `"MPCHC_LAV_TOOLCHAIN=MSVC`""
           )
+          if ($iscc) {
+            $buildUserBat += "SET `"InnoSetupPath=$iscc`""
+          }
           Set-Content -Path "build.user.bat" -Value ($buildUserBat -join "`r`n") -Encoding ASCII
           Get-Content "build.user.bat"
 
@@ -296,7 +310,11 @@ jobs:
           }
 
           # Stage installer .exe separately if built
-          $installers = Get-ChildItem -Path "bin" -File -Filter "*.exe" -ErrorAction SilentlyContinue
+          $installerSearchDirs = @("bin", "distrib\bin", "distrib") | Where-Object { Test-Path $_ }
+          $installers = @()
+          foreach ($sdir in $installerSearchDirs) {
+            $installers += Get-ChildItem -Path $sdir -File -Filter "MPC-HC*.exe" -ErrorAction SilentlyContinue
+          }
           if ($installers) {
             New-Item -ItemType Directory -Force -Path $installerRoot | Out-Null
             foreach ($inst in $installers) {
@@ -306,6 +324,11 @@ jobs:
 
           Write-Host "=== Portable contents ==="
           Get-ChildItem -Path $portableRoot -Recurse | Select-Object FullName, Length
+
+          if (Test-Path $installerRoot) {
+            Write-Host "=== Installer contents ==="
+            Get-ChildItem -Path $installerRoot -Recurse | Select-Object FullName, Length
+          }
 
       - name: Upload portable build artifact
         uses: actions/upload-artifact@v4
@@ -321,7 +344,7 @@ jobs:
         with:
           name: MPC-HC-${{ inputs.platform || 'x64' }}-Installer
           path: artifact/installer/*.exe
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
 
       - name: Upload PDB debug symbols

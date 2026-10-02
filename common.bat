@@ -20,8 +20,9 @@ REM along with this program.  If not, see <http://www.gnu.org/licenses/>.
 IF "%1" == "" CALL :SubMsg "ERROR" "%~nx0, No argument was provided." & EXIT /B
 PUSHD %~dp0
 CALL %*
+SET "COMMON_RET=%ERRORLEVEL%"
 POPD
-EXIT /B
+EXIT /B %COMMON_RET%
 
 :SubPreBuild
 IF EXIST "build.user.bat" CALL "build.user.bat"
@@ -104,9 +105,15 @@ IF EXIST "%TAR_PATH%" (SET "TAR=%TAR_PATH%" & EXIT /B)
 EXIT /B
 
 :SubDetectInnoSetup
+IF DEFINED InnoSetupPath IF EXIST "%InnoSetupPath%" EXIT /B
+IF EXIST "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" (SET "InnoSetupPath=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" & EXIT /B)
+IF EXIST "%ProgramFiles%\Inno Setup 6\ISCC.exe" (SET "InnoSetupPath=%ProgramFiles%\Inno Setup 6\ISCC.exe" & EXIT /B)
+IF EXIST "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" (SET "InnoSetupPath=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" & EXIT /B)
+FOR %%G IN (ISCC.exe) DO IF EXIST "%%~$PATH:G" (SET "InnoSetupPath=%%~$PATH:G" & EXIT /B)
 FOR /F "tokens=5*" %%A IN (
-  'REG QUERY "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1" /v "Inno Setup: App Path" 2^>NUL ^| FIND "REG_SZ" ^|^|
-   REG QUERY "HKLM\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1" /v "Inno Setup: App Path" 2^>NUL ^| FIND "REG_SZ"') DO SET "InnoSetupPath=%%B\ISCC.exe"
+  'REG QUERY "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1" /v "Inno Setup: App Path" 2^>NUL ^| "%SystemRoot%\System32\find.exe" "REG_SZ" ^|^|
+   REG QUERY "HKLM\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1" /v "Inno Setup: App Path" 2^>NUL ^| "%SystemRoot%\System32\find.exe" "REG_SZ" ^|^|
+   REG QUERY "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1" /v "Inno Setup: App Path" 2^>NUL ^| "%SystemRoot%\System32\find.exe" "REG_SZ"') DO SET "InnoSetupPath=%%B\ISCC.exe"
 EXIT /B
 
 :SubDetectSevenzipPath
