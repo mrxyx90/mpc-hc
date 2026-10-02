@@ -93,9 +93,13 @@ jobs:
           $vsPath = & $vswhere -latest -requires Microsoft.Component.MSBuild Microsoft.VisualStudio.Component.VC.ATLMFC Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           if (!$vsPath) {
             $vsPath = & $vswhere -latest -products * -property installationPath
-            if (!$vsPath) {
-              throw "Visual Studio installation not found"
-            }
+          }
+          if (!$vsPath) {
+            throw "Visual Studio installation not found"
+          }
+
+          $atlmfcHeaders = Get-ChildItem -Path (Join-Path $vsPath "VC\Tools\MSVC") -Filter "afx.h" -Recurse -ErrorAction SilentlyContinue
+          if (!$atlmfcHeaders) {
             Write-Host "Installing Visual Studio C++ ATL/MFC components into $vsPath..."
             & $vsSetup modify --installPath "$vsPath" --add Microsoft.VisualStudio.Component.VC.ATL --add Microsoft.VisualStudio.Component.VC.ATLMFC --quiet --norestart --wait
             if ($LASTEXITCODE -ne 0) {
