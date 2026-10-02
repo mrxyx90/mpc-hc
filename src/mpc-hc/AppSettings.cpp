@@ -272,7 +272,7 @@ CAppSettings::CAppSettings()
     , sYDLCommandLine(_T(""))
     , bSnapShotSubtitles(true)
     , bSnapShotKeepVideoExtension(true)
-    , bEnableCrashReporter(true)
+    , bEnableCrashReporter(false)
     , nStreamPosPollerInterval(100)
     , bShowLangInStatusbar(false)
     , bShowFPSInStatusbar(false)
@@ -1394,7 +1394,9 @@ void CAppSettings::SaveSettings(bool write_full_history /* = false */)
     pApp->WriteProfileString(IDS_R_SETTINGS, IDS_RS_YDL_EXEPATH, sYDLExePath);
     pApp->WriteProfileString(IDS_R_SETTINGS, IDS_RS_YDL_COMMAND_LINE, sYDLCommandLine);
 
+#if USE_DRDUMP_CRASH_REPORTER
     pApp->WriteProfileInt(IDS_R_SETTINGS, IDS_RS_ENABLE_CRASH_REPORTER, bEnableCrashReporter);
+#endif
 
     pApp->WriteProfileInt(IDS_R_SETTINGS, IDS_RS_TIME_REFRESH_INTERVAL, nStreamPosPollerInterval);
     pApp->WriteProfileInt(IDS_R_SETTINGS, IDS_RS_SHOW_LANG_STATUSBAR, bShowLangInStatusbar);
@@ -2363,7 +2365,11 @@ void CAppSettings::LoadSettings()
     sYDLExePath     = pApp->GetProfileString(IDS_R_SETTINGS, IDS_RS_YDL_EXEPATH, _T(""));
     sYDLCommandLine = pApp->GetProfileString(IDS_R_SETTINGS, IDS_RS_YDL_COMMAND_LINE, _T(""));
 
-    bEnableCrashReporter = !!pApp->GetProfileInt(IDS_R_SETTINGS, IDS_RS_ENABLE_CRASH_REPORTER, TRUE);
+#if USE_DRDUMP_CRASH_REPORTER
+    bEnableCrashReporter = !!pApp->GetProfileInt(IDS_R_SETTINGS, IDS_RS_ENABLE_CRASH_REPORTER, FALSE);
+#else
+    bEnableCrashReporter = false;
+#endif
 
     nStreamPosPollerInterval = pApp->GetProfileInt(IDS_R_SETTINGS, IDS_RS_TIME_REFRESH_INTERVAL, 100);
     bShowLangInStatusbar = !!pApp->GetProfileInt(IDS_R_SETTINGS, IDS_RS_SHOW_LANG_STATUSBAR, FALSE);

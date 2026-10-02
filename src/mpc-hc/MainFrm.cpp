@@ -21097,9 +21097,11 @@ void CMainFrame::ForceCloseProcess()
         PLAYER_LOG(_T("CMainFrame::ForceCloseProcess"));
         FLUSH_LOGGER();
     }
+    #if !defined(_DEBUG) && USE_DRDUMP_CRASH_REPORTER
     if (CrashReporter::IsEnabled()) {
         CrashReporter::Disable();
     }
+    #endif
     TerminateProcess(GetCurrentProcess(), 0xDEADBEEF);
 }
 
