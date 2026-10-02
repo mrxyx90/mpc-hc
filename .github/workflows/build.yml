@@ -1,0 +1,239 @@
+name: Build MPC-HC
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Target platform to build'
+        required: false
+        default: 'x64'
+        type: choice
+        options:
+          - x64
+          - x86
+          - Both
+      configuration:
+        description: 'Build configuration'
+        required: false
+        default: 'Release'
+        type: choice
+        options:
+          - Release
+          - Debug
+      packages:
+        description: 'Build installer and 7z packages (Release only)'
+        required: false
+        default: true
+        type: boolean
+  push:
+    branches:
+      - develop
+      - master
+      - main
+      - 'arena/**'
+  pull_request:
+    branches:
+      - develop
+      - master
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ inputs.platform || 'x64' }} ${{ inputs.configuration || 'Release' }})
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Fetch tags for version stamping
+        shell: pwsh
+        run: |
+          git fetch --tags --unshallow 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            git fetch --tags 2>$null
+          }
+          if (Test-Path "src/thirdparty/LAVFilters/src/.git") {
+            git -C "src/thirdparty/LAVFilters/src" fetch --tags --unshallow 2>$null
+            if ($LASTEXITCODE -ne 0) {
+              git -C "src/thirdparty/LAVFilters/src" fetch --tags 2>$null
+            }
+          }
+          exit 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip polib
+
+      - name: Setup Visual Studio, NASM, and build environment
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $installerDir = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer"
+          $vswhere = Join-Path $installerDir "vswhere.exe"
+          $vsSetup = Join-Path $installerDir "setup.exe"
+
+          if (!(Test-Path -LiteralPath $vswhere)) {
+            throw "vswhere.exe not found at $vswhere"
+          }
+
+          # Check if Visual Studio already has MSBuild, x86/x64 tools, and ATL/MFC installed
+          $vsPath = & $vswhere -latest -requires Microsoft.Component.MSBuild Microsoft.VisualStudio.Component.VC.ATLMFC Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (!$vsPath) {
+            $vsPath = & $vswhere -latest -products * -property installationPath
+            if (!$vsPath) {
+              throw "Visual Studio installation not found"
+            }
+            Write-Host "Installing Visual Studio C++ ATL/MFC components into $vsPath..."
+            & $vsSetup modify --installPath "$vsPath" --add Microsoft.VisualStudio.Component.VC.ATL --add Microsoft.VisualStudio.Component.VC.ATLMFC --quiet --norestart --wait
+            if ($LASTEXITCODE -ne 0) {
+              throw "Visual Studio component installation failed with exit code $LASTEXITCODE"
+            }
+          }
+          Write-Host "Using Visual Studio: $vsPath"
+
+          # Ensure NASM is installed and on PATH
+          $nasmCmd = Get-Command nasm.exe -ErrorAction SilentlyContinue
+          if (!$nasmCmd) {
+            Write-Host "Installing NASM..."
+            choco install nasm --no-progress -y
+            $nasmPaths = @(
+              "C:\Program Files\NASM",
+              "C:\Program Files (x86)\NASM",
+              "C:\ProgramData\chocolatey\bin"
+            )
+            foreach ($p in $nasmPaths) {
+              if (Test-Path (Join-Path $p "nasm.exe")) {
+                Add-Content -Path $env:GITHUB_PATH -Value $p
+                $env:PATH = "$p;$env:PATH"
+                break
+              }
+            }
+          }
+          nasm -v
+
+          # Ensure Inno Setup >= 6.3.2 is installed (required by distrib\mpc-hc_setup.iss)
+          $isccPaths = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $isccPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+          $needInnoUpgrade = $true
+          if ($iscc) {
+            $innoVer = [version](Get-Item $iscc).VersionInfo.FileVersion
+            Write-Host "Found Inno Setup version: $innoVer at $iscc"
+            if ($innoVer -ge [version]"6.3.2.0") {
+              $needInnoUpgrade = $false
+            }
+          }
+          if ($needInnoUpgrade) {
+            Write-Host "Installing/upgrading Inno Setup (6.3.2+ required)..."
+            choco upgrade innosetup --no-progress -y
+          }
+
+          # Detect latest installed Windows 10/11 SDK version
+          $sdkIncludeRoot = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\Include"
+          $sdkVer = Get-ChildItem -Path $sdkIncludeRoot -Directory -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path (Join-Path $_.FullName "um\Windows.h") } |
+            Sort-Object { [version]$_.Name } -Descending |
+            Select-Object -First 1 -ExpandProperty Name
+
+          if (!$sdkVer) {
+            throw "No Windows 10/11 SDK found under $sdkIncludeRoot"
+          }
+          Write-Host "Using Windows SDK: $sdkVer"
+
+          # Detect Python directory
+          $pythonExe = (Get-Command python.exe).Source
+          $pythonDir = Split-Path -Parent $pythonExe
+          Write-Host "Using Python directory: $pythonDir"
+
+          # Write build.user.bat for MPC-HC build scripts
+          $buildUserBat = @(
+            "@ECHO OFF",
+            "SET `"MPCHC_VS_PATH=$vsPath`"",
+            "SET `"MPCHC_WINSDK_VER=$sdkVer`"",
+            "SET `"MPCHC_PYTHON=$pythonDir`"",
+            "SET `"MPCHC_LAV_TOOLCHAIN=MSVC`""
+          )
+          Set-Content -Path "build.user.bat" -Value ($buildUserBat -join "`r`n") -Encoding ASCII
+          Get-Content "build.user.bat"
+
+      - name: Prepare DirectX redistributable DLLs
+        shell: pwsh
+        run: |
+          $dirs = @(
+            @{ Src = "distrib\x64"; Dst = "bin\mpc-hc_x64" },
+            @{ Src = "distrib\x86"; Dst = "bin\mpc-hc_x86" }
+          )
+          foreach ($d in $dirs) {
+            New-Item -ItemType Directory -Force -Path $d.Dst | Out-Null
+            Copy-Item -Path (Join-Path $d.Src "D3DCompiler_47.dll") -Destination (Join-Path $d.Dst "d3dcompiler_47.dll") -Force
+            Copy-Item -Path (Join-Path $d.Src "D3DX9_43.dll") -Destination (Join-Path $d.Dst "d3dx9_43.dll") -Force
+          }
+
+      - name: Build MPC-HC
+        shell: cmd
+        run: |
+          set "PLATFORM=${{ inputs.platform || 'x64' }}"
+          set "CONFIG=${{ inputs.configuration || 'Release' }}"
+          set "EXTRA_ARGS="
+          if /I "%CONFIG%" == "Release" (
+            if /I "${{ inputs.packages == false && 'false' || 'true' }}" == "true" (
+              set "EXTRA_ARGS=Packages"
+            )
+          )
+          call build.bat Build %PLATFORM% MPCHC %CONFIG% %EXTRA_ARGS% Silent Nocolors
+
+      - name: Show build error logs on failure
+        if: failure()
+        shell: pwsh
+        run: |
+          if (Test-Path "bin\logs") {
+            Get-ChildItem -Path "bin\logs" -Filter "*errors*.log" | ForEach-Object {
+              Write-Host "=== $($_.Name) ==="
+              Get-Content $_.FullName
+            }
+          }
+
+      - name: Stage build artifacts
+        shell: pwsh
+        run: |
+          $artifactRoot = Join-Path $env:GITHUB_WORKSPACE "artifact"
+          New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
+
+          # Copy built packages (.7z and installer .exe) if created
+          Get-ChildItem -Path "bin" -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -in @(".7z", ".exe") } |
+            ForEach-Object {
+              Copy-Item -Path $_.FullName -Destination $artifactRoot -Force
+            }
+
+          # Also copy the unpacked build output folder(s)
+          $outDirs = Get-ChildItem -Path "bin" -Directory -Filter "mpc-hc_*" -ErrorAction SilentlyContinue
+          foreach ($dir in $outDirs) {
+            $dest = Join-Path $artifactRoot $dir.Name
+            Copy-Item -Path $dir.FullName -Destination $dest -Recurse -Force
+          }
+
+          Get-ChildItem -Path $artifactRoot -Recurse -Depth 1
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: MPC-HC-${{ inputs.platform || 'x64' }}-${{ inputs.configuration || 'Release' }}
+          path: artifact/*
+          if-no-files-found: error
+          retention-days: 14
