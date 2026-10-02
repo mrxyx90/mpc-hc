@@ -20,10 +20,15 @@ on:
         options:
           - Release
           - Debug
-      packages:
-        description: 'Build installer and 7z packages (Release only)'
+      installer:
+        description: 'Also build Inno Setup installer (Release only)'
         required: false
         default: true
+        type: boolean
+      pdb:
+        description: 'Upload PDB debug symbols artifact'
+        required: false
+        default: false
         type: boolean
   push:
     branches:
@@ -178,10 +183,14 @@ jobs:
       - name: Prepare DirectX redistributable DLLs
         shell: pwsh
         run: |
-          $dirs = @(
-            @{ Src = "distrib\x64"; Dst = "bin\mpc-hc_x64" },
-            @{ Src = "distrib\x86"; Dst = "bin\mpc-hc_x86" }
-          )
+          $platform = "${{ inputs.platform || 'x64' }}"
+          $dirs = @()
+          if ($platform -in @("x64", "Both")) {
+            $dirs += @{ Src = "distrib\x64"; Dst = "bin\mpc-hc_x64" }
+          }
+          if ($platform -in @("x86", "Both")) {
+            $dirs += @{ Src = "distrib\x86"; Dst = "bin\mpc-hc_x86" }
+          }
           foreach ($d in $dirs) {
             New-Item -ItemType Directory -Force -Path $d.Dst | Out-Null
             Copy-Item -Path (Join-Path $d.Src "D3DCompiler_47.dll") -Destination (Join-Path $d.Dst "d3dcompiler_47.dll") -Force
@@ -195,8 +204,8 @@ jobs:
           set "CONFIG=${{ inputs.configuration || 'Release' }}"
           set "EXTRA_ARGS="
           if /I "%CONFIG%" == "Release" (
-            if /I "${{ inputs.packages == false && 'false' || 'true' }}" == "true" (
-              set "EXTRA_ARGS=Packages"
+            if /I "${{ inputs.installer == false && 'false' || 'true' }}" == "true" (
+              set "EXTRA_ARGS=Installer"
             )
           )
           call build.bat Build %PLATFORM% MPCHC %CONFIG% %EXTRA_ARGS% Silent Nocolors
@@ -215,29 +224,76 @@ jobs:
       - name: Stage build artifacts
         shell: pwsh
         run: |
-          $artifactRoot = Join-Path $env:GITHUB_WORKSPACE "artifact"
-          New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
+          $portableRoot = Join-Path $env:GITHUB_WORKSPACE "artifact\portable"
+          $installerRoot = Join-Path $env:GITHUB_WORKSPACE "artifact\installer"
+          $pdbRoot = Join-Path $env:GITHUB_WORKSPACE "artifact\pdb"
+          New-Item -ItemType Directory -Force -Path $portableRoot | Out-Null
 
-          # Copy built packages (.7z and installer .exe) if created
-          Get-ChildItem -Path "bin" -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Extension -in @(".7z", ".exe") } |
-            ForEach-Object {
-              Copy-Item -Path $_.FullName -Destination $artifactRoot -Force
-            }
-
-          # Also copy the unpacked build output folder(s)
+          # Stage clean portable app folder(s) without .pdb, .lib, .exp, .ipdb, .iobj
           $outDirs = Get-ChildItem -Path "bin" -Directory -Filter "mpc-hc_*" -ErrorAction SilentlyContinue
           foreach ($dir in $outDirs) {
-            $dest = Join-Path $artifactRoot $dir.Name
-            Copy-Item -Path $dir.FullName -Destination $dest -Recurse -Force
+            $dest = if ($outDirs.Count -eq 1) { $portableRoot } else { Join-Path $portableRoot $dir.Name }
+            New-Item -ItemType Directory -Force -Path $dest | Out-Null
+
+            Get-ChildItem -Path $dir.FullName -Recurse -File | ForEach-Object {
+              $relPath = $_.FullName.Substring($dir.FullName.Length).TrimStart('\', '/')
+              if ($_.Extension -in @(".pdb", ".lib", ".exp", ".ipdb", ".iobj")) {
+                if ("${{ inputs.pdb }}" -eq "true") {
+                  $pdbDest = Join-Path $pdbRoot (Join-Path $dir.Name $relPath)
+                  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $pdbDest) | Out-Null
+                  Copy-Item -Path $_.FullName -Destination $pdbDest -Force
+                }
+              } else {
+                $fileDest = Join-Path $dest $relPath
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $fileDest) | Out-Null
+                Copy-Item -Path $_.FullName -Destination $fileDest -Force
+              }
+            }
+
+            # Copy Shaders, Shaders11, and COPYING.txt into the portable folder (same as SubCreatePackages in build.bat)
+            $shaders9 = Join-Path $dest "Shaders"
+            $shaders11 = Join-Path $dest "Shaders11"
+            New-Item -ItemType Directory -Force -Path $shaders9 | Out-Null
+            New-Item -ItemType Directory -Force -Path $shaders11 | Out-Null
+            Copy-Item -Path "src\mpc-hc\res\shaders\dx9\*.hlsl" -Destination $shaders9 -Force
+            Copy-Item -Path "src\mpc-hc\res\shaders\dx11\*.hlsl" -Destination $shaders11 -Force
+            Copy-Item -Path "COPYING.txt" -Destination $dest -Force
           }
 
-          Get-ChildItem -Path $artifactRoot -Recurse -Depth 1
+          # Stage installer .exe separately if built
+          $installers = Get-ChildItem -Path "bin" -File -Filter "*.exe" -ErrorAction SilentlyContinue
+          if ($installers) {
+            New-Item -ItemType Directory -Force -Path $installerRoot | Out-Null
+            foreach ($inst in $installers) {
+              Copy-Item -Path $inst.FullName -Destination $installerRoot -Force
+            }
+          }
 
-      - name: Upload build artifacts
+          Write-Host "=== Portable contents ==="
+          Get-ChildItem -Path $portableRoot -Recurse | Select-Object FullName, Length
+
+      - name: Upload portable build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MPC-HC-${{ inputs.platform || 'x64' }}-${{ inputs.configuration || 'Release' }}
-          path: artifact/*
+          name: MPC-HC-${{ inputs.platform || 'x64' }}
+          path: artifact/portable/*
           if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload installer artifact
+        if: ${{ (inputs.configuration || 'Release') == 'Release' && (inputs.installer == '' || inputs.installer == true || inputs.installer == 'true') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: MPC-HC-${{ inputs.platform || 'x64' }}-Installer
+          path: artifact/installer/*.exe
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload PDB debug symbols
+        if: ${{ inputs.pdb == true || inputs.pdb == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: MPC-HC-${{ inputs.platform || 'x64' }}-PDB
+          path: artifact/pdb/*
+          if-no-files-found: warn
           retention-days: 14
