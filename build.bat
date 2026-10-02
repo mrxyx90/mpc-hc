@@ -455,6 +455,9 @@ IF /I "%NAME%" == "MPC-HC" (
   )
   COPY /Y /V "%VS_OUT_DIR%\d3dcompiler_%MPC_D3D_COMPILER_VERSION%.dll" "%PCKG_NAME%\d3dcompiler_%MPC_D3D_COMPILER_VERSION%.dll" >NUL
   COPY /Y /V "%VS_OUT_DIR%\d3dx9_%MPC_DX_SDK_NUMBER%.dll"              "%PCKG_NAME%\d3dx9_%MPC_DX_SDK_NUMBER%.dll" >NUL
+  IF NOT DEFINED MPCHC_LITE IF EXIST "..\distrib\%ARCH%\MediaInfo.dll" (
+    COPY /Y /V "..\distrib\%ARCH%\MediaInfo.dll" "%PCKG_NAME%\MediaInfo.dll" >NUL
+  )
   IF NOT EXIST "%PCKG_NAME%\Shaders" MD "%PCKG_NAME%\Shaders"
   COPY /Y /V "..\src\mpc-hc\res\shaders\dx9\*.hlsl" "%PCKG_NAME%\Shaders" >NUL
   IF NOT EXIST "%PCKG_NAME%\Shaders11" MD "%PCKG_NAME%\Shaders11"
