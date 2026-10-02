@@ -241,7 +241,7 @@ jobs:
           set "CONFIG=${{ inputs.configuration || 'Release' }}"
           set "EXTRA_ARGS="
           if /I "%CONFIG%" == "Release" (
-            if /I "${{ inputs.installer == false && 'false' || 'true' }}" == "true" (
+            if /I "${{ github.event_name != 'workflow_dispatch' || inputs.installer == true || inputs.installer == 'true' }}" == "True" (
               set "EXTRA_ARGS=Installer"
             )
           )
