@@ -598,6 +598,7 @@ CMPCTheme::ModernThemeStyle CMPCTheme::EffectiveThemeStyle() {
 
 void CMPCTheme::InitializeColors() {
     isWindows11Style = EffectiveThemeStyle() == ModernThemeStyle::WINDOWS11;
+    drawThemedControls = false; //the palettes that draw the controls set it back; a live switch can land on one that does not
     InfoBarBGColor = RGB(0, 0, 0);
     InfoBarTextColor = RGB(255, 255, 255);
     InfoBarBorderColor = RGB(0, 0, 0);
@@ -677,6 +678,10 @@ void CMPCTheme::InitializeWindows10Colors() {
         CheckboxBGColor = RGB(0, 0, 0);
         CheckboxBorderHoverColor = RGB(121, 121, 121);
         CheckboxBGHoverColor = RGB(8, 8, 8);
+        //the established windows 10 dark disabled grey, dimmer than the enabled border
+        CheckboxDisabledBorderColor = RGB(109, 109, 109);
+        CheckboxDisabledCheckedColor = RGB(109, 109, 109);
+        CheckboxDisabledGlyphColor = RGB(109, 109, 109);
 
         ImageDisabledColor = RGB(109, 109, 109);
 
