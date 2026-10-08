@@ -13444,6 +13444,26 @@ void CMainFrame::ToggleFullscreen(bool fToNearest, bool fSwitchScreenResWhenHasT
             ZoomVideoWindow();
         }
         MoveVideoWindow();
+
+        // The caption has just been added to or removed from the window. The desktop can
+        // keep composing the frame the window had: pieces of the old title bar stay on
+        // screen over the client area, and the client rect can be clipped to the old
+        // window. Windows 8 and later hide the transition with DWMWA_CLOAK instead, but
+        // that attribute does not exist on Windows 7, and the cloak/repaint path is also
+        // gated behind a non-zero fullscreen delay, so by default nothing recomputes or
+        // repaints the frame at all. Recompute it the same way the themed caption does in
+        // CMPCThemeUtil::refreshWindows10DarkFrame(), then repaint the window together
+        // with all of its children.
+        if (((dwRemove | dwAdd) & WS_CAPTION) != 0) {
+            ::SetWindowPos(m_hWnd, nullptr, 0, 0, 0, 0,
+                           SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+
+            const BOOL bActive = (::GetForegroundWindow() == m_hWnd);
+            ::DefWindowProc(m_hWnd, WM_NCACTIVATE, !bActive, 0);
+            ::DefWindowProc(m_hWnd, WM_NCACTIVATE, bActive, 0);
+
+            RedrawWindow(nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
+        }
     }
 
     if (restart_osd) {
